@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DFN — Component Architecture</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div id="load">
+  <div class="ll">DFN</div>
+  <div style="color:var(--muted);font-size:9px;letter-spacing:3px;text-transform:uppercase">Component Architecture</div>
+  <div class="lb"><div class="lf"></div></div>
+</div>
+
+<div id="c"></div>
+
+<div id="hdr">
+  <div class="logo"><div class="dot"></div>DFN</div>
+  <div class="sub" id="hdr-sub">Component Architecture</div>
+  <div class="hstats">
+    <div class="hstat"><b id="stat-nodes">—</b><span>Components</span></div>
+    <div class="hstat"><b id="stat-layers">—</b><span>Layers</span></div>
+    <div class="hstat"><b style="color:var(--good)">LIVE</b><span>Status</span></div>
+    <button id="theme-toggle" title="Switch theme">
+      <span class="tt-icon" id="tt-icon">☾</span>
+      <span id="tt-label">Neon</span>
+    </button>
+  </div>
+</div>
+
+<div id="hint">🖱 Drag: Rotate &nbsp;|&nbsp; Scroll: Zoom &nbsp;|&nbsp; Right-drag: Pan</div>
+
+<div id="leg">
+  <div class="lt">Layers</div>
+  <div id="leg-items"></div>
+</div>
+
+<div id="ctrl">
+  <button class="cb" id="btn-iso">⬡ ISO</button>
+  <button class="cb" id="btn-zi">+</button>
+  <button class="cb" id="btn-zo">−</button>
+  <button class="cb" id="btn-rot">⟳</button>
+</div>
+
+<div id="mode">View: <b id="mlbl">Isometric</b></div>
+
+<div id="tip">
+  <div class="tn" id="tname"></div>
+  <div class="tl" id="tlayer"></div>
+  <div class="td" id="tdesc"></div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="script.js"></script>
+</body>
+</html>

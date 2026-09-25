@@ -1,0 +1,106 @@
+{
+  "meta": {
+    "name": "DFN",
+    "subtitle": "Component Architecture — Expanded Isometric View"
+  },
+  "layers": {
+    "trading":   { "label": "External / Trading" },
+    "datastore": { "label": "Data Stores" },
+    "esb":       { "label": "Integration (ESB/FIX)" },
+    "gateway":   { "label": "Gateway" },
+    "core":      { "label": "Core (OMS/BOS)" },
+    "csm":       { "label": "Post-trade (CSM)" },
+    "settle":    { "label": "Settlement/Clearance" }
+  },
+  "tiers": [
+    { "row": 42,  "label": "01 · EXTERNAL / TRADING" },
+    { "row": 132, "label": "02 · ADAPTERS" },
+    { "row": 203, "label": "03 · GATEWAY" },
+    { "row": 282, "label": "04 · CORE (OMS / BOS)" },
+    { "row": 382, "label": "05 · POST-TRADE (CSM)" },
+    { "row": 505, "label": "06 · SETTLEMENT / CLEARANCE" }
+  ],
+  "nodes": [
+    { "id": "trading_platform", "label": "Trading Platform", "sub": "(Atrad)", "layer": "trading",
+      "shape": "box", "x": 510, "row": 42, "size": { "w": 2.8, "h": 1.4, "d": 2 },
+      "desc": "External trading system (Atrad) — entry point for market orders and IPO events." },
+
+    { "id": "ipo_db", "label": "IPO DB", "layer": "datastore",
+      "shape": "db", "x": 270, "row": 42,
+      "desc": "Stores IPO subscription data and history." },
+
+    { "id": "esb", "label": "ESB", "layer": "esb",
+      "shape": "box", "x": 470, "row": 132,
+      "desc": "Enterprise Service Bus — routes messages between Trading Platform and internal components." },
+
+    { "id": "ipo", "label": "IPO", "layer": "datastore",
+      "shape": "box", "x": 270, "row": 132,
+      "desc": "IPO module handling subscription workflow." },
+
+    { "id": "at", "label": "AT", "layer": "datastore",
+      "shape": "box", "x": 100, "row": 132,
+      "desc": "AT component — automated trading interface." },
+
+    { "id": "dt", "label": "DT", "layer": "datastore",
+      "shape": "box", "x": 380, "row": 132,
+      "desc": "DT component — direct trading module." },
+
+    { "id": "gateway", "label": "GATEWAY", "layer": "gateway",
+      "shape": "wide", "x": 0, "row": 203, "size": { "w": 34, "h": 0.8, "d": 3.0 },
+      "desc": "Central gateway layer routing all traffic between external inputs and core services." },
+
+    { "id": "bos", "label": "BOS", "layer": "core",
+      "shape": "box", "x": 110, "row": 282, "size": { "w": 2.6, "h": 1.4, "d": 1.8 },
+      "desc": "Back-Office System — handles settlement, reconciliation, and back-office operations." },
+
+    { "id": "oms", "label": "OMS", "layer": "core",
+      "shape": "box", "x": 320, "row": 282, "size": { "w": 2.6, "h": 1.4, "d": 1.8 },
+      "desc": "Order Management System — processes and manages the lifecycle of trading orders." },
+
+    { "id": "dfix", "label": "DFIX", "layer": "esb",
+      "shape": "box", "x": 500, "row": 282,
+      "desc": "Direct FIX gateway — FIX protocol adapter connecting OMS to external trading systems." },
+
+    { "id": "tdwl", "label": "TDWL", "layer": "esb",
+      "shape": "box", "x": 630, "row": 282,
+      "desc": "TDWL — trading data link interfacing with downstream settlement." },
+
+    { "id": "db", "label": "DB", "layer": "datastore",
+      "shape": "db", "x": 220, "row": 402,
+      "desc": "Main database — persists order, trade, and account data for BOS and OMS." },
+
+    { "id": "csm", "label": "CSM", "layer": "csm",
+      "shape": "box", "x": 380, "row": 382,
+      "desc": "Client Statement Management — generates and distributes post-trade confirmations." },
+
+    { "id": "csm_db", "label": "CSM DB", "layer": "datastore",
+      "shape": "db", "x": 510, "row": 382,
+      "desc": "CSM database — stores statement records and client account data." },
+
+    { "id": "edaa", "label": "EDAA", "sub": "(Settlement)", "layer": "settle",
+      "shape": "box", "x": 315, "row": 505, "size": { "w": 2.6, "h": 1.5, "d": 2.2 },
+      "desc": "Electronic depository — handles securities settlement and transfer of ownership." },
+
+    { "id": "mukasa", "label": "MUKASA", "sub": "(Clearance)", "layer": "settle",
+      "shape": "box", "x": 445, "row": 505, "size": { "w": 2.6, "h": 1.5, "d": 2.2 },
+      "desc": "MUKASA clearing system — processes trade clearance and net position calculation." }
+  ],
+  "connections": [
+    { "from": "trading_platform", "to": "esb",     "both": true },
+    { "from": "ipo_db",           "to": "ipo",     "both": true },
+    { "from": "esb",              "to": "gateway", "both": true },
+    { "from": "ipo",              "to": "gateway", "both": false },
+    { "from": "at",               "to": "gateway", "both": true },
+    { "from": "dt",               "to": "gateway", "both": true },
+    { "from": "gateway",          "to": "bos",     "both": true },
+    { "from": "gateway",          "to": "oms",     "both": true },
+    { "from": "oms",              "to": "dfix",    "both": true },
+    { "from": "dfix",             "to": "tdwl",    "both": true },
+    { "from": "bos",              "to": "db",      "both": false },
+    { "from": "oms",              "to": "db",      "both": false },
+    { "from": "oms",              "to": "csm",     "both": false },
+    { "from": "csm",              "to": "csm_db",  "both": true },
+    { "from": "csm",              "to": "edaa",    "both": false },
+    { "from": "csm",              "to": "mukasa",  "both": false }
+  ]
+}
