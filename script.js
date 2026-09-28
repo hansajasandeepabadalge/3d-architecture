@@ -8,13 +8,13 @@ const W = () => window.innerWidth, H = () => window.innerHeight;
 /* ── Distinct color per category (layer) ─────────────────── */
 const LAYER_COLORS = {
   dark: {
-    trading:   { fill: 0x061524, edge: 0x00b4ff },
-    datastore: { fill: 0x0e1220, edge: 0x6888aa },
-    esb:       { fill: 0x041510, edge: 0x18d868 },
-    gateway:   { fill: 0x04121a, edge: 0x00d8e8 },
-    core:      { fill: 0x120528, edge: 0xaa60ff },
-    csm:       { fill: 0x1c0d00, edge: 0xf5a020 },
-    settle:    { fill: 0x1c0308, edge: 0xff3358 },
+    trading:   { fill: 0x061a2e, edge: 0x00e5ff },
+    datastore: { fill: 0x101632, edge: 0x8fb4ff },
+    esb:       { fill: 0x041f14, edge: 0x00ffa8 },
+    gateway:   { fill: 0x03151f, edge: 0x00f0ff },
+    core:      { fill: 0x180730, edge: 0xc060ff },
+    csm:       { fill: 0x201000, edge: 0xffb020 },
+    settle:    { fill: 0x22040c, edge: 0xff2d6b },
   },
   light: {
     trading:   { fill: 0xb8d8f8, edge: 0x1565c0 },
@@ -29,26 +29,26 @@ const LAYER_COLORS = {
 
 const THEMES = {
   dark: {
-    bg: 0x05060b, fog: 0x05060b, fogDensity: 0.0046,
-    grid: 0x0b0f1c, ground: 0x05060b,
-    ambient: { color: 0xffffff, intensity: 0.38 },
-    sun:    { color: 0x9ad4ff, intensity: 0.88 },
-    fill:   { color: 0xa070ff, intensity: 0.30 },
-    wire:   0x1a2035,
-    labelColor: '#cce4ff', labelSubColor: 'rgba(130,165,215,0.6)',
+    bg: 0x03040a, fog: 0x03040a, fogDensity: 0.0044,
+    grid: 0xffffff, gridOpacity: 0.10, ground: 0x03040a,
+    ambient: { color: 0x2a3cff, intensity: 0.34 },
+    sun:    { color: 0x50d8ff, intensity: 0.95 },
+    fill:   { color: 0xff2ec4, intensity: 0.40 },
+    wire:   0x263454,
+    labelColor: '#d8f2ff', labelSubColor: 'rgba(140,205,255,0.68)',
     labelFont: 'Syne', labelFontWeight: '700',
-    glow: true, edgeOpacity: 0.9,
+    glow: true, edgeOpacity: 0.95, baseEmissive: 0.14,
   },
   light: {
     bg: 0xf0e8d4, fog: 0xf0e8d4, fogDensity: 0.0033,
-    grid: 0xddd0b4, ground: 0xf4edd8,
+    grid: 0xddd0b4, gridOpacity: 0.55, ground: 0xf4edd8,
     ambient: { color: 0xfff8f0, intensity: 0.78 },
     sun:    { color: 0xffe8c0, intensity: 0.98 },
     fill:   { color: 0xffc880, intensity: 0.24 },
     wire:   0xb8a070,
     labelColor: '#3a2a18', labelSubColor: 'rgba(100,78,52,0.7)',
     labelFont: 'Fraunces', labelFontWeight: '600',
-    glow: false, edgeOpacity: 0.58,
+    glow: false, edgeOpacity: 0.58, baseEmissive: 0.0,
   },
 };
 
@@ -116,12 +116,15 @@ sun.shadow.mapSize.set(2048, 2048);
 scene.add(sun);
 const fillLight = new THREE.DirectionalLight(T().fill.color, T().fill.intensity);
 fillLight.position.set(-15, 10, -15); scene.add(fillLight);
+/* Extra rim light for a techy neon edge in dark mode */
+const rimLight = new THREE.DirectionalLight(0x00e5ff, theme === 'dark' ? 0.25 : 0);
+rimLight.position.set(10, 6, -30); scene.add(rimLight);
 
 /* ── Ground + faded grid ─────────────────────────────────── */
 const grid = new THREE.GridHelper(180, 90, T().grid, T().grid);
 grid.material.vertexColors = false;
 grid.material.transparent = true;
-grid.material.opacity = 0.55;
+grid.material.opacity = T().gridOpacity;
 grid.position.y = -0.01;
 scene.add(grid);
 const gndMat = new THREE.MeshLambertMaterial({ color: T().ground });
@@ -144,7 +147,7 @@ function makeMats(layerKey, opacity) {
     transparent: opacity !== undefined ? opacity < 1 : false,
     opacity: opacity !== undefined ? opacity : 1,
     emissive: T().glow ? c.edge : 0x000000,
-    emissiveIntensity: T().glow ? 0.07 : 0,
+    emissiveIntensity: T().glow ? T().baseEmissive : 0,
   });
   const edgeMat = new THREE.LineBasicMaterial({
     color: c.edge, transparent: true, opacity: T().edgeOpacity,
@@ -166,7 +169,7 @@ function box(layerKey, w = 2.2, h = 1.4, d = 1.8, opacity) {
     const c = LC(lkey);
     m.material.color.setHex(c.fill);
     m.material.emissive.setHex(T().glow ? c.edge : 0x000000);
-    m.material.emissiveIntensity = T().glow ? 0.07 : 0;
+    m.material.emissiveIntensity = T().glow ? T().baseEmissive : 0;
     edges.material.color.setHex(c.edge);
     edges.material.opacity = T().edgeOpacity;
   };
@@ -193,7 +196,7 @@ function dbBox(layerKey) {
     slices.forEach(({ mesh, edges }) => {
       mesh.material.color.setHex(c.fill);
       mesh.material.emissive.setHex(T().glow ? c.edge : 0x000000);
-      mesh.material.emissiveIntensity = T().glow ? 0.07 : 0;
+      mesh.material.emissiveIntensity = T().glow ? T().baseEmissive : 0;
       edges.material.color.setHex(c.edge);
       edges.material.opacity = T().edgeOpacity;
     });
@@ -259,8 +262,11 @@ function connect(a, b, layerKey, both) {
   connectionLines.push({ line, layerKey, baseColor: color });
 
   const mkDot = (pa, pb) => {
-    const dmat = new THREE.MeshBasicMaterial({ color });
-    const dot = new THREE.Mesh(new THREE.SphereGeometry(0.09, 6, 6), dmat);
+    const dmat = new THREE.MeshBasicMaterial({
+      color, transparent: true, opacity: 1,
+      blending: THREE.AdditiveBlending, depthWrite: false,
+    });
+    const dot = new THREE.Mesh(new THREE.SphereGeometry(0.1, 8, 8), dmat);
     dot.userData.anim = { pa: pa.clone(), pb: pb.clone(), t: Math.random(), speed: 0.27 + Math.random() * 0.27 };
     dot.userData.layerKey = layerKey;
     scene.add(dot); arrows.push(dot);
@@ -402,10 +408,10 @@ function tickSelection(t) {
     const opacity    = Math.max(0.16, 1 - dim * 0.74);
     const edgeOp     = T().edgeOpacity * Math.max(0.12, 1 - dim * 0.78);
 
-    // Emissive: selected node breathes, others fade to almost zero
+    // Emissive: selected node breathes, others fade to a low idle glow
     const emissiveInt = isSel
-      ? (T().glow ? env * (0.88 + 0.22 * breath) : 0)
-      : (T().glow ? 0.06 * (1 - dim) : 0);
+      ? (T().glow ? env * (0.9 + 0.3 * breath) + T().baseEmissive * (1 - env) : 0)
+      : (T().glow ? T().baseEmissive * (1 - dim * 0.7) : 0);
 
     const applyMesh = (mesh, edges) => {
       mesh.material.color.setHex(fillTarget);
@@ -426,7 +432,7 @@ function tickSelection(t) {
 
   // Connection lines & packet dots — dim when anything is selected
   connectionLines.forEach(({ line }) => { line.material.opacity = sel ? 0.10 : 0.48; });
-  arrows.forEach(d => { d.material.opacity = sel ? 0.08 : 1.0; d.material.transparent = true; });
+  arrows.forEach(d => { d.material.opacity = sel ? 0.08 : 1.0; });
 
   // Label sprites — focused label stays bright, others dim
   labelSprites.forEach(entry => {
@@ -468,10 +474,12 @@ function applyThemeToScene() {
   scene.background = new THREE.Color(th.bg);
   scene.fog.color.setHex(th.fog); scene.fog.density = th.fogDensity;
   grid.material.color.setHex(th.grid);
+  grid.material.opacity = th.gridOpacity;
   gndMat.color.setHex(th.ground);
   ambientLight.color.setHex(th.ambient.color); ambientLight.intensity = th.ambient.intensity;
   sun.color.setHex(th.sun.color);              sun.intensity = th.sun.intensity;
   fillLight.color.setHex(th.fill.color);       fillLight.intensity = th.fill.intensity;
+  rimLight.intensity = theme === 'dark' ? 0.25 : 0;
 
   if (ARCH) {
     ARCH.nodes.forEach(n => {
@@ -638,12 +646,11 @@ function animate() {
   orbit._tz    += (orbit.tz    - orbit._tz)    * L;
   applyOrbit();
 
-  // Animated packet dots along connection lines
+  // Animated packet dots travel straight along their connection line
   arrows.forEach(d => {
     const a = d.userData.anim;
     a.t = (a.t + dt * a.speed) % 1;
     d.position.lerpVectors(a.pa, a.pb, a.t);
-    d.position.y += Math.sin(a.t * Math.PI) * 0.2;
   });
 
   // Subtle idle float (each node has a unique phase)

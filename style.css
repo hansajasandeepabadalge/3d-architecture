@@ -5,22 +5,22 @@
 /* ── Theme tokens ────────────────────────────────────────── */
 :root,
 [data-theme="dark"] {
-  --bg:        #05060b;
-  --bg-2:      #090c18;
-  --panel:     rgba(8, 11, 22, 0.86);
-  --panel-2:   rgba(12, 16, 30, 0.95);
-  --border:    rgba(58, 127, 255, 0.18);
-  --border-strong: rgba(58, 127, 255, 0.42);
-  --text:      #ddeeff;
-  --muted:     #5a7090;
-  --accent:    #3a7fff;
-  --accent-2:  #ff4d9d;
-  --good:      #22d86a;
+  --bg:        #03040a;
+  --bg-2:      #070a16;
+  --panel:     rgba(6, 10, 20, 0.82);
+  --panel-2:   rgba(10, 15, 28, 0.95);
+  --border:    rgba(0, 229, 255, 0.22);
+  --border-strong: rgba(0, 229, 255, 0.52);
+  --text:      #d8f2ff;
+  --muted:     #6b88b8;
+  --accent:    #00e5ff;
+  --accent-2:  #ff2ec4;
+  --good:      #22ff9c;
   --font-display: 'Syne', sans-serif;
   --font-weight-display: 800;
   --letter-display: -0.5px;
-  --glow: 0 0 18px rgba(58, 127, 255, 0.35);
-  --shadow: 0 12px 36px rgba(0, 0, 0, 0.55);
+  --glow: 0 0 22px rgba(0, 229, 255, 0.45), 0 0 42px rgba(255, 46, 196, 0.12);
+  --shadow: 0 12px 36px rgba(0, 0, 0, 0.6);
   --radius: 10px;
 }
 
@@ -58,11 +58,15 @@ html, body {
 #c:active { cursor: grabbing; }
 canvas { display: block; width: 100% !important; height: 100% !important; }
 
-/* Neon vignette — dark */
+/* Neon vignette — dark, with a faint cyan/magenta wash and scanlines for a techy feel */
 [data-theme="dark"] body::before {
   content: '';
   position: fixed; inset: 0; z-index: 1; pointer-events: none;
-  background: radial-gradient(ellipse at 50% 50%, transparent 40%, rgba(0,0,0,0.65) 100%);
+  background:
+    repeating-linear-gradient(0deg, rgba(0,229,255,0.025) 0px, rgba(0,229,255,0.025) 1px, transparent 1px, transparent 3px),
+    radial-gradient(ellipse at 15% 10%, rgba(0,229,255,0.06), transparent 55%),
+    radial-gradient(ellipse at 88% 92%, rgba(255,46,196,0.05), transparent 55%),
+    radial-gradient(ellipse at 50% 50%, transparent 40%, rgba(0,0,0,0.68) 100%);
 }
 /* Paper wash — light */
 [data-theme="light"] body::before {
