@@ -4,6 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>DFN — Component Architecture</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@700;800&family=Fraunces:opsz,wght@9..144,600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -14,14 +16,21 @@
   <div class="lb"><div class="lf"></div></div>
 </div>
 
+<!-- Three.js canvas -->
 <div id="c"></div>
 
+<!-- CSS bloom glow (projected to 3D position each frame) -->
+<div id="glow-dot"></div>
+
+<!-- Spotlight darken overlay — radial gradient with hole at selected component -->
+<div id="sel-overlay"></div>
+
+<!-- Header -->
 <div id="hdr">
   <div class="logo"><div class="dot"></div>DFN</div>
   <div class="sub" id="hdr-sub">Component Architecture</div>
   <div class="hstats">
     <div class="hstat"><b id="stat-nodes">—</b><span>Components</span></div>
-    <div class="hstat"><b id="stat-layers">—</b><span>Layers</span></div>
     <div class="hstat"><b style="color:var(--good)">LIVE</b><span>Status</span></div>
     <button id="theme-toggle" title="Switch theme">
       <span class="tt-icon" id="tt-icon">☾</span>
@@ -30,13 +39,28 @@
   </div>
 </div>
 
-<div id="hint">🖱 Drag: Rotate &nbsp;|&nbsp; Scroll: Zoom &nbsp;|&nbsp; Right-drag: Pan</div>
+<div id="hint">🖱 Drag · Scroll · Click component</div>
 
-<div id="leg">
-  <div class="lt">Layers</div>
-  <div id="leg-items"></div>
+<!-- Side info panel (slides in on selection) -->
+<div id="focus-panel">
+  <div id="fp-header">
+    <div id="fp-color-dot"></div>
+    <div id="fp-title-wrap">
+      <div id="fp-name"></div>
+      <div id="fp-sub"></div>
+    </div>
+  </div>
+  <hr class="fp-div">
+  <div class="fp-lbl">PURPOSE</div>
+  <div id="fp-desc"></div>
+  <div class="fp-lbl" style="margin-top:16px">CATEGORY</div>
+  <div id="fp-cat"></div>
+  <div class="fp-lbl" style="margin-top:16px">CONNECTS TO</div>
+  <div id="fp-connections"></div>
+  <button id="btn-deselect">← Reset View</button>
 </div>
 
+<!-- Controls -->
 <div id="ctrl">
   <button class="cb" id="btn-iso">⬡ ISO</button>
   <button class="cb" id="btn-zi">+</button>
@@ -46,9 +70,9 @@
 
 <div id="mode">View: <b id="mlbl">Isometric</b></div>
 
+<!-- Hover tooltip -->
 <div id="tip">
   <div class="tn" id="tname"></div>
-  <div class="tl" id="tlayer"></div>
   <div class="td" id="tdesc"></div>
 </div>
 

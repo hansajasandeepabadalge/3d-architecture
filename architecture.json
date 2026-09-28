@@ -46,7 +46,7 @@
       "desc": "DT component — direct trading module." },
 
     { "id": "gateway", "label": "GATEWAY", "layer": "gateway",
-      "shape": "wide", "x": 0, "row": 203, "size": { "w": 34, "h": 0.8, "d": 3.0 },
+      "shape": "box", "x": 280, "row": 203,
       "desc": "Central gateway layer routing all traffic between external inputs and core services." },
 
     { "id": "bos", "label": "BOS", "layer": "core",
@@ -81,9 +81,9 @@
       "shape": "box", "x": 315, "row": 505, "size": { "w": 2.6, "h": 1.5, "d": 2.2 },
       "desc": "Electronic depository — handles securities settlement and transfer of ownership." },
 
-    { "id": "mukasa", "label": "MUKASA", "sub": "(Clearance)", "layer": "settle",
+    { "id": "muqassa", "label": "MUQASSA", "sub": "(Clearance)", "layer": "settle",
       "shape": "box", "x": 445, "row": 505, "size": { "w": 2.6, "h": 1.5, "d": 2.2 },
-      "desc": "MUKASA clearing system — processes trade clearance and net position calculation." }
+      "desc": "MUQASSA clearing system — processes trade clearance and net position calculation." }
   ],
   "connections": [
     { "from": "trading_platform", "to": "esb",     "both": true },
@@ -101,6 +101,6 @@
     { "from": "oms",              "to": "csm",     "both": false },
     { "from": "csm",              "to": "csm_db",  "both": true },
     { "from": "csm",              "to": "edaa",    "both": false },
-    { "from": "csm",              "to": "mukasa",  "both": false }
+    { "from": "csm",              "to": "muqassa",  "both": false }
   ]
 }
