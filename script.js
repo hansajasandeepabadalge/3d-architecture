@@ -37,7 +37,7 @@ const THEMES = {
     wire:   0x263454,
     labelColor: '#d8f2ff', labelSubColor: 'rgba(140,205,255,0.68)',
     labelFont: 'Syne', labelFontWeight: '700',
-    glow: true, edgeOpacity: 0.95, baseEmissive: 0.14,
+    glow: true, edgeOpacity: 0.95, baseEmissive: 0.28, haloOpacity: 0.32,
   },
   light: {
     bg: 0xf0e8d4, fog: 0xf0e8d4, fogDensity: 0.0033,
@@ -48,7 +48,7 @@ const THEMES = {
     wire:   0xb8a070,
     labelColor: '#3a2a18', labelSubColor: 'rgba(100,78,52,0.7)',
     labelFont: 'Fraunces', labelFontWeight: '600',
-    glow: false, edgeOpacity: 0.58, baseEmissive: 0.0,
+    glow: true, edgeOpacity: 0.78, baseEmissive: 0.12, haloOpacity: 0.16,
   },
 };
 
@@ -125,7 +125,7 @@ const grid = new THREE.GridHelper(180, 90, T().grid, T().grid);
 grid.material.vertexColors = false;
 grid.material.transparent = true;
 grid.material.opacity = T().gridOpacity;
-grid.position.y = -0.01;
+grid.position.y = 0.01;
 scene.add(grid);
 const gndMat = new THREE.MeshLambertMaterial({ color: T().ground });
 const gnd = new THREE.Mesh(new THREE.PlaneGeometry(180, 180), gndMat);
@@ -155,8 +155,34 @@ function makeMats(layerKey, opacity) {
   return { fillMat, edgeMat };
 }
 
-function box(layerKey, w = 2.2, h = 1.4, d = 1.8, opacity) {
-  const geo = new THREE.BoxGeometry(w, h, d);
+// Shared soft halo, tinted with each node's category color.
+const haloCanvas = document.createElement('canvas');
+haloCanvas.width = haloCanvas.height = 128;
+const haloCtx = haloCanvas.getContext('2d');
+const haloGradient = haloCtx.createRadialGradient(64, 64, 0, 64, 64, 64);
+haloGradient.addColorStop(0, 'rgba(255,255,255,0.65)');
+haloGradient.addColorStop(0.35, 'rgba(255,255,255,0.35)');
+haloGradient.addColorStop(0.7, 'rgba(255,255,255,0.08)');
+haloGradient.addColorStop(1, 'rgba(255,255,255,0)');
+haloCtx.fillStyle = haloGradient;
+haloCtx.fillRect(0, 0, 128, 128);
+const haloTexture = new THREE.CanvasTexture(haloCanvas);
+
+function addNodeGlow(group, layerKey, side) {
+  const material = new THREE.SpriteMaterial({
+    map: haloTexture, color: LC(layerKey).edge,
+    transparent: true, opacity: T().haloOpacity,
+    blending: theme === 'dark' ? THREE.AdditiveBlending : THREE.NormalBlending,
+    depthWrite: false,
+  });
+  const halo = new THREE.Sprite(material);
+  halo.scale.set(side * 3, side * 3, 1);
+  group.add(halo);
+  group._glowRef = halo;
+}
+
+function box(layerKey, side = 2.2, opacity) {
+  const geo = new THREE.BoxGeometry(side, side, side);
   const { fillMat, edgeMat } = makeMats(layerKey, opacity);
   const m = new THREE.Mesh(geo, fillMat);
   m.castShadow = (opacity === undefined || opacity >= 1);
@@ -176,17 +202,19 @@ function box(layerKey, w = 2.2, h = 1.4, d = 1.8, opacity) {
   return g;
 }
 
-function dbBox(layerKey) {
+function dbBox(layerKey, side = 2.2) {
   const g = new THREE.Group();
   const slices = [];
+  const gap = side * 0.035;
+  const sliceHeight = (side - 2 * gap) / 3;
   for (let i = 0; i < 3; i++) {
-    const geo = new THREE.BoxGeometry(2.2, 0.38, 1.8);
+    const geo = new THREE.BoxGeometry(side, sliceHeight, side);
     const { fillMat, edgeMat } = makeMats(layerKey);
     const mesh = new THREE.Mesh(geo, fillMat);
     mesh.castShadow = mesh.receiveShadow = true;
-    mesh.position.y = i * 0.44;
+    mesh.position.y = -side / 2 + sliceHeight / 2 + i * (sliceHeight + gap);
     const edges = new THREE.LineSegments(new THREE.EdgesGeometry(geo), edgeMat);
-    edges.position.y = i * 0.44;
+    edges.position.y = mesh.position.y;
     g.add(mesh, edges);
     slices.push({ mesh, edges });
   }
@@ -203,7 +231,7 @@ function dbBox(layerKey) {
   };
   return g;
 }
-function wideBox(layerKey, w, h, d) { return box(layerKey, w, h, d, 0.20); }
+function wideBox(layerKey, side) { return box(layerKey, side, 0.20); }
 
 /* ── Label sprites (canvas-baked, one per theme) ─────────── */
 function bakeLabelTexture(text, sub, th) {
@@ -284,17 +312,18 @@ function buildFromArch(arch) {
   document.getElementById('hdr-sub').textContent = arch.meta.subtitle || arch.meta.name;
   document.getElementById('stat-nodes').textContent = arch.nodes.length;
 
-  const DEF = { w: 2.2, h: 1.4, d: 1.8 };
   arch.nodes.forEach(n => {
-    const size = { ...DEF, ...(n.size || {}) };
+    // Preserve each node's footprint width while enforcing a 1:1:1 envelope.
+    const side = n.size?.w || 2.2;
     let group;
-    if      (n.shape === 'db')   group = dbBox(n.layer);
-    else if (n.shape === 'wide') group = wideBox(n.layer, size.w, size.h, size.d);
-    else                         group = box(n.layer, size.w, size.h, size.d);
+    if      (n.shape === 'db')   group = dbBox(n.layer, side);
+    else if (n.shape === 'wide') group = wideBox(n.layer, side);
+    else                         group = box(n.layer, side);
+    addNodeGlow(group, n.layer, side);
 
-    const y = n.shape === 'db' ? 0.7 : (size.h >= 1.5 ? 0.75 : 0.7);
+    const y = side / 2;
     addNode(n.id, group, sx(n.x), y, sz(n.row), {
-      label: n.label, sub: n.sub || '', h: n.shape === 'db' ? 1.7 : size.h,
+      label: n.label, sub: n.sub || '', h: side,
     });
     nodeStates[n.id] = { dim: 0, dimTarget: 0 };
   });
@@ -428,6 +457,11 @@ function tickSelection(t) {
     const g = node.group;
     if (g._meshRef)   applyMesh(g._meshRef, g._edgesRef);
     if (g._subMeshes) g._subMeshes.forEach(({ mesh, edges }) => applyMesh(mesh, edges));
+    if (g._glowRef) {
+      g._glowRef.material.color.setHex(edgeTarget);
+      g._glowRef.material.opacity = T().haloOpacity * (1 - dim * 0.85)
+        * (isSel ? 1 + env * (0.6 + 0.2 * breath) : 0.9 + 0.1 * breath);
+    }
   });
 
   // Connection lines & packet dots — dim when anything is selected
@@ -485,6 +519,12 @@ function applyThemeToScene() {
     ARCH.nodes.forEach(n => {
       const g = nodes[n.id].group;
       if (g.userData.recolor) g.userData.recolor(n.layer);
+      if (g._glowRef) {
+        g._glowRef.material.color.setHex(LC(n.layer).edge);
+        g._glowRef.material.opacity = th.haloOpacity;
+        g._glowRef.material.blending = theme === 'dark' ? THREE.AdditiveBlending : THREE.NormalBlending;
+        g._glowRef.material.needsUpdate = true;
+      }
     });
   }
   connectionLines.forEach(({ line, layerKey }) => {
@@ -651,11 +691,6 @@ function animate() {
     const a = d.userData.anim;
     a.t = (a.t + dt * a.speed) % 1;
     d.position.lerpVectors(a.pa, a.pb, a.t);
-  });
-
-  // Subtle idle float (each node has a unique phase)
-  Object.values(nodes).forEach(n => {
-    n.group.position.y = n.y + Math.sin(t * 1.05 + n.x * 0.65 + n.z * 0.28) * 0.042;
   });
 
   // Selection dimming, glow, and CSS overlays
