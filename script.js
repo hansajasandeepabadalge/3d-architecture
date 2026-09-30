@@ -178,7 +178,7 @@ function makeMats(layerKey, opacity) {
   return { fillMat, edgeMat };
 }
 
-// Shared soft halo, tinted with each node's category color.
+// A ground-level light pool avoids billboard planes cutting through the faces.
 const haloCanvas = document.createElement('canvas');
 haloCanvas.width = haloCanvas.height = 128;
 const haloCtx = haloCanvas.getContext('2d');
@@ -192,13 +192,15 @@ haloCtx.fillRect(0, 0, 128, 128);
 const haloTexture = new THREE.CanvasTexture(haloCanvas);
 
 function addNodeGlow(group, layerKey, side) {
-  const material = new THREE.SpriteMaterial({
+  const material = new THREE.MeshBasicMaterial({
     map: haloTexture, color: LC(layerKey).edge,
     transparent: true, opacity: T().haloOpacity,
     blending: theme === 'dark' ? THREE.AdditiveBlending : THREE.NormalBlending,
     depthWrite: false,
   });
-  const halo = new THREE.Sprite(material);
+  const halo = new THREE.Mesh(new THREE.PlaneGeometry(1,1),material);
+  halo.rotation.x = -Math.PI / 2;
+  halo.position.y = -side / 2 + 0.018;
   halo.scale.set(side * 3, side * 3, 1);
   group.add(halo);
   group._glowRef = halo;
@@ -256,37 +258,90 @@ function dbBox(layerKey, side = 2.2) {
 }
 function wideBox(layerKey, side) { return box(layerKey, side, 0.20); }
 
-/* ── Label sprites (canvas-baked, one per theme) ─────────── */
-function bakeLabelTexture(text, sub, th) {
+/* ── Crisp, screen-sized component labels ─────────────────── */
+const LABEL_FONT = '"Segoe UI", Arial, sans-serif';
+const LABEL_NAME_SIZE = 15;
+const LABEL_SUB_SIZE = 11;
+function labelMetrics(text,sub) {
+  const ctx = document.createElement('canvas').getContext('2d');
+  ctx.font = `600 ${LABEL_NAME_SIZE}px ${LABEL_FONT}`;
+  const nameWidth = ctx.measureText(text).width;
+  ctx.font = `500 ${LABEL_SUB_SIZE}px ${LABEL_FONT}`;
+  const subWidth = sub ? ctx.measureText(sub).width : 0;
+  return { width: Math.ceil(Math.max(nameWidth,subWidth)) + 12, height: sub ? 42 : 26 };
+}
+function bakeLabelTexture(text,sub,mode,metrics) {
   const cv = document.createElement('canvas');
-  cv.width = 320; cv.height = sub ? 96 : 64;
-  const ctx = cv.getContext('2d');
-  const font = `${th.labelFont || 'sans-serif'}, monospace`;
-  ctx.font = `${th.labelFontWeight || '700'} 30px ${font}`;
-  ctx.fillStyle = th.labelColor; ctx.textAlign = 'center';
-  ctx.fillText(text, 160, sub ? 36 : 40);
+  const resolution = 3;
+  cv.width = metrics.width * resolution; cv.height = metrics.height * resolution;
+  const ctx = cv.getContext('2d'); ctx.scale(resolution,resolution);
+  const dark = mode === 'dark';
+  const w = metrics.width;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  // A fine text outline provides contrast without a card, border, or accent bar.
+  ctx.strokeStyle = dark ? 'rgba(3,6,14,0.9)' : 'rgba(255,253,248,0.95)';
+  ctx.lineWidth = 2; ctx.lineJoin = 'round';
+  ctx.font = `600 ${LABEL_NAME_SIZE}px ${LABEL_FONT}`;
+  ctx.strokeText(text,w/2,13);
+  ctx.fillStyle = dark ? '#f4f8ff' : '#172434';
+  ctx.fillText(text,w/2,13);
   if (sub) {
-    ctx.font = `400 19px ${font}`;
-    ctx.fillStyle = th.labelSubColor;
-    ctx.fillText(sub, 160, 65);
+    ctx.font = `500 ${LABEL_SUB_SIZE}px ${LABEL_FONT}`;
+    ctx.strokeText(sub,w/2,31);
+    ctx.fillStyle = dark ? '#b8cce3' : '#526274';
+    ctx.fillText(sub,w/2,31);
   }
-  return new THREE.CanvasTexture(cv);
+  const texture = new THREE.CanvasTexture(cv);
+  texture.generateMipmaps = false;
+  texture.minFilter = texture.magFilter = THREE.LinearFilter;
+  return texture;
 }
 const labelSprites = [];
-function makeLabelSprite(text, sub, x, y, z) {
-  const texDark = bakeLabelTexture(text, sub, THEMES.dark);
-  const texLight = bakeLabelTexture(text, sub, THEMES.light);
+function makeLabelSprite(text,sub,x,y,z) {
+  const metrics = labelMetrics(text,sub);
+  const texDark = bakeLabelTexture(text,sub,'dark',metrics);
+  const texLight = bakeLabelTexture(text,sub,'light',metrics);
   const mat = new THREE.SpriteMaterial({
     map: theme === 'dark' ? texDark : texLight,
-    transparent: true, depthTest: false,
+    transparent:true, depthTest:false, depthWrite:false, fog:false, toneMapped:false,
   });
-  const s = new THREE.Sprite(mat);
-  s.scale.set(sub ? 3.4 : 2.7, sub ? 1.3 : 0.95, 1);
-  s.position.set(x, y, z);
-  scene.add(s);
-  const entry = { sprite: s, texDark, texLight, nodeId: null };
+  const sprite = new THREE.Sprite(mat);
+  // Text is composited after bloom so bright letters never acquire ghost copies.
+  sprite.layers.set(1);
+  // The bottom of the label stays at a fixed point above its component.
+  sprite.center.set(0.5,0);
+  sprite.position.set(x,y,z); sprite.renderOrder = 12;
+  scene.add(sprite);
+  const leader = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(),new THREE.Vector3()]),
+    new THREE.LineBasicMaterial({color:theme === 'dark' ? 0x97a9c0 : 0x5c6878,transparent:true,opacity:0.4,depthTest:false,depthWrite:false}));
+  leader.renderOrder = 11; leader.frustumCulled = false; scene.add(leader);
+  const entry = {sprite,leader,texDark,texLight,metrics,nodeId:null};
   labelSprites.push(entry);
   return entry;
+}
+const labelProjection = new THREE.Vector3();
+function updateLabelLayout() {
+  const screenWidth = W(), screenHeight = H();
+  const worldPerPixel = orbit._zoom * 2 / screenHeight;
+  labelSprites.forEach(entry => {
+    const node = nodes[entry.nodeId], side = node.meta.h * node.group.scale.y;
+    const {width,height} = entry.metrics;
+    // Compensate only for zoom to keep the font's screen size constant.
+    // Camera movement never rearranges or clamps the fixed label positions.
+    entry.sprite.scale.set(width*worldPerPixel,height*worldPerPixel,1);
+    labelProjection.copy(entry.sprite.position).project(camera);
+    const cx = (labelProjection.x+1)*screenWidth/2, cy = (1-labelProjection.y)*screenHeight/2;
+    entry.sprite.visible = entry.leader.visible = labelProjection.z >= -1 && labelProjection.z <= 1
+      && cx+width/2 > 0 && cx-width/2 < screenWidth && cy > 56 && cy-height < screenHeight;
+    entry.sprite.renderOrder = entry.nodeId === selectedNodeId ? 14 : entry.nodeId === hoveredNodeId ? 13 : 12;
+    entry.sprite.material.opacity = 1-nodeStates[entry.nodeId].dim*0.55;
+    const position = entry.leader.geometry.attributes.position;
+    position.setXYZ(0,node.group.position.x,node.group.position.y+side/2,node.group.position.z);
+    position.setXYZ(1,entry.sprite.position.x,entry.sprite.position.y,entry.sprite.position.z);
+    position.needsUpdate = true;
+    entry.leader.material.color.setHex(theme === 'dark' ? 0x97a9c0 : 0x5c6878);
+    entry.leader.material.opacity = 0.42-nodeStates[entry.nodeId].dim*0.25;
+  });
 }
 
 /* ── Node registry ───────────────────────────────────────── */
@@ -296,9 +351,10 @@ function addNode(id, group, x, y, z, meta) {
   group.position.set(x, y, z);
   scene.add(group);
   nodes[id] = { group, x, y, z, meta };
-  group.traverse(c => { if (c.isMesh) { c.userData.nodeId = id; meshes.push(c); } });
+  group.traverse(c => { if (c.isMesh && c !== group._glowRef) { c.userData.nodeId = id; meshes.push(c); } });
   const entry = makeLabelSprite(meta.label, meta.sub || '', x, y + (meta.h || 1.4) / 2 + 1.1, z);
   entry.nodeId = id;
+  entry.sprite.userData.nodeId = id;
 }
 
 /* ── Connections ─────────────────────────────────────────── */
@@ -565,13 +621,7 @@ function tickSelection(t,dt) {
   });
   arrows.forEach(d => { d.material.opacity = THREE.MathUtils.lerp(1,0.22,env); });
 
-  // Label sprites — focused label stays bright, others dim
-  labelSprites.forEach(entry => {
-    const state = nodeStates[entry.nodeId];
-    entry.sprite.material.opacity = 1 - state.dim * 0.7;
-    const node = nodes[entry.nodeId];
-    entry.sprite.position.y = node.meta.h * node.group.scale.y + 1.1;
-  });
+  updateLabelLayout();
   if (!sel && env < 0.002) focusNodeId = null;
 }
 
@@ -587,6 +637,7 @@ function applyThemeToScene() {
   sun.color.setHex(th.sun.color);              sun.intensity = th.sun.intensity;
   fillLight.color.setHex(th.fill.color);       fillLight.intensity = th.fill.intensity;
   rimLight.intensity = theme === 'dark' ? 0.25 : 0;
+  renderer.shadowMap.needsUpdate = true;
 
   if (ARCH) {
     ARCH.nodes.forEach(n => {
@@ -630,6 +681,7 @@ document.getElementById('tt-label').textContent = theme === 'dark' ? 'Neon' : 'C
 /* ── Pointer, touch, and keyboard interaction ─────────────── */
 const canvasHost = document.getElementById('c');
 const raycaster = new THREE.Raycaster();
+raycaster.layers.enable(1);
 const hoverMouse = new THREE.Vector2(-9999,-9999);
 const tip = document.getElementById('tip');
 const techCursor = new DFNEffects.Cursor();
@@ -648,13 +700,17 @@ function cancelCameraTransition() {
 }
 function hitAt(x,y) {
   raycaster.setFromCamera(new THREE.Vector2(x / W() * 2 - 1,-y / H() * 2 + 1),camera);
-  return raycaster.intersectObjects(meshes,false)[0]?.object.userData.nodeId || null;
+  return hitNodeFromRay();
+}
+function hitNodeFromRay() {
+  const labelHit = raycaster.intersectObjects(labelSprites.filter(entry => entry.sprite.visible).map(entry => entry.sprite),false)[0];
+  return labelHit?.object.userData.nodeId || raycaster.intersectObjects(meshes,false)[0]?.object.userData.nodeId || null;
 }
 function updateHover() {
   hoveredNodeId = null;
   if (pointerOnScene && !drag) {
     raycaster.setFromCamera(hoverMouse,camera);
-    hoveredNodeId = raycaster.intersectObjects(meshes,false)[0]?.object.userData.nodeId || null;
+    hoveredNodeId = hitNodeFromRay();
   }
   const node = hoveredNodeId && nodes[hoveredNodeId];
   if (node) {

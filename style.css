@@ -59,12 +59,11 @@ html, body {
 #c:active { cursor: grabbing; }
 canvas { display: block; width: 100% !important; height: 100% !important; }
 
-/* Neon vignette — dark, with a faint cyan/magenta wash and scanlines for a techy feel */
+/* A soft neon vignette keeps the solid faces free of scanline banding. */
 [data-theme="dark"] body::before {
   content: '';
   position: fixed; inset: 0; z-index: 1; pointer-events: none;
   background:
-    repeating-linear-gradient(0deg, rgba(0,229,255,0.025) 0px, rgba(0,229,255,0.025) 1px, transparent 1px, transparent 3px),
     radial-gradient(ellipse at 15% 10%, rgba(0,229,255,0.06), transparent 55%),
     radial-gradient(ellipse at 88% 92%, rgba(255,46,196,0.05), transparent 55%),
     radial-gradient(ellipse at 50% 50%, transparent 40%, rgba(0,0,0,0.68) 100%);
@@ -327,10 +326,6 @@ button:focus-visible, summary:focus-visible, select:focus-visible { outline: 2px
   .cursor-ready, .cursor-ready #c, .cursor-ready #c:active, .cursor-ready button, .cursor-ready select, .cursor-ready summary { cursor: none; }
   .cursor-ready #tech-cursor { opacity: 1; }
 }
-#hdr, #ctrl, #mode { transition: filter .65s ease, opacity .65s ease; }
-.is-inspecting #hdr, .is-inspecting #ctrl, .is-inspecting #mode { filter: blur(.55px); }
-.is-inspecting #hdr:hover, .is-inspecting #hdr:focus-within,
-.is-inspecting #ctrl:hover, .is-inspecting #ctrl:focus-within { filter: none; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .1s !important; transition-delay: 0s !important; }
 }

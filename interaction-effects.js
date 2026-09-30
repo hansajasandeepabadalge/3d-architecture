@@ -114,8 +114,6 @@ const DFNEffects = (() => {
     constructor(renderer, scene, camera) {
       this.renderer = renderer; this.scene = scene; this.camera = camera;
       this.color = new THREE.WebGLRenderTarget(1, 1);
-      this.hasDepth = renderer.capabilities.isWebGL2 || !!renderer.extensions.get('WEBGL_depth_texture');
-      if (this.hasDepth) this.color.depthTexture = new THREE.DepthTexture(1, 1);
       this.blurA = new THREE.WebGLRenderTarget(1,1, { depthBuffer: false });
       this.blurB = new THREE.WebGLRenderTarget(1,1, { depthBuffer: false });
       this.mask = new THREE.WebGLRenderTarget(1,1, { minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter });
@@ -125,6 +123,8 @@ const DFNEffects = (() => {
       this.quad.frustumCulled = false;
       this.screen.add(this.quad);
       this.white = new THREE.MeshBasicMaterial({ color: 0xffffff, fog: false });
+      this.green = new THREE.MeshBasicMaterial({ color: 0x00ff00, fog: false });
+      this.labelMasks = new WeakMap();
       this.black = new THREE.Color(0);
       this.blur = new THREE.ShaderMaterial({
         uniforms: { source: { value: null }, direction: { value: new THREE.Vector2() } },
@@ -142,35 +142,41 @@ const DFNEffects = (() => {
       this.composite = new THREE.ShaderMaterial({
         uniforms: {
           sharp: { value: this.color.texture }, soft: { value: this.blurB.texture },
-          mask: { value: this.mask.texture }, depth: { value: this.color.depthTexture || this.mask.texture },
-          texel: { value: new THREE.Vector2() }, amount: { value: 0 }, focalDepth: { value: 95 },
-          near: { value: camera.near }, far: { value: camera.far }, hasDepth: { value: this.hasDepth ? 1 : 0 },
+          mask: { value: this.mask.texture },
+          texel: { value: new THREE.Vector2() }, amount: { value: 0 },
           bloom: { value: 0.2 },
         }, vertexShader: quadVertex,
         fragmentShader: `
           varying vec2 vUv;
-          uniform sampler2D sharp, soft, mask, depth;
+          uniform sampler2D sharp, soft, mask;
           uniform vec2 texel;
-          uniform float amount, focalDepth, near, far, hasDepth, bloom;
+          uniform float amount, bloom;
           vec3 bright(vec2 uv) { vec3 c = texture2D(sharp,uv).rgb; return c * smoothstep(0.55,0.95,max(c.r,max(c.g,c.b))); }
           void main() {
             vec3 original = texture2D(sharp,vUv).rgb;
-            float keep = texture2D(mask,vUv).r;
-            keep = max(keep,texture2D(mask,vUv + vec2(texel.x,0.0)).r);
-            keep = max(keep,texture2D(mask,vUv - vec2(texel.x,0.0)).r);
-            keep = max(keep,texture2D(mask,vUv + vec2(0.0,texel.y)).r);
-            keep = max(keep,texture2D(mask,vUv - vec2(0.0,texel.y)).r);
-            float distance = mix(near,far,texture2D(depth,vUv).x);
-            float coc = mix(1.0,clamp(abs(distance-focalDepth)/12.0,0.35,1.0),hasDepth);
-            float blurAmount = amount * coc * (1.0-keep);
+            // Red protects the selected body, edges and label; green marks other components.
+            vec2 classification = texture2D(mask,vUv).rg;
+            vec2 guard = texel * 3.0;
+            classification = max(classification,texture2D(mask,vUv + vec2(guard.x,0.0)).rg);
+            classification = max(classification,texture2D(mask,vUv - vec2(guard.x,0.0)).rg);
+            classification = max(classification,texture2D(mask,vUv + vec2(0.0,guard.y)).rg);
+            classification = max(classification,texture2D(mask,vUv - vec2(0.0,guard.y)).rg);
+            classification = max(classification,texture2D(mask,vUv + guard).rg);
+            classification = max(classification,texture2D(mask,vUv - guard).rg);
+            classification = max(classification,texture2D(mask,vUv + vec2(guard.x,-guard.y)).rg);
+            classification = max(classification,texture2D(mask,vUv + vec2(-guard.x,guard.y)).rg);
+            float keep = step(0.01,classification.r) * step(0.002,amount);
+            float surroundings = step(0.01,classification.g) * (1.0-keep);
+            float blurAmount = amount * surroundings;
             vec3 color = mix(original,texture2D(soft,vUv).rgb,blurAmount);
-            color *= 1.0 - amount * (1.0-keep) * 0.15;
+            color *= 1.0 - amount * surroundings * 0.15;
             vec2 d = texel * 3.0;
             vec3 light = bright(vUv+vec2(d.x,0.0)) + bright(vUv-vec2(d.x,0.0))
               + bright(vUv+vec2(0.0,d.y)) + bright(vUv-vec2(0.0,d.y));
             d *= 2.0;
             light += bright(vUv+d) + bright(vUv-d) + bright(vUv+vec2(d.x,-d.y)) + bright(vUv+vec2(-d.x,d.y));
-            gl_FragColor = vec4(color + light * bloom / 8.0,1.0);
+            // Keep bloom outside the protected geometry so it cannot soften the selected surface.
+            gl_FragColor = vec4(color + light * bloom * (1.0-keep) / 8.0,1.0);
           }`, depthTest: false, depthWrite: false,
       });
       this.resize();
@@ -178,7 +184,8 @@ const DFNEffects = (() => {
     resize() {
       const size = this.renderer.getDrawingBufferSize(new THREE.Vector2());
       this.color.setSize(size.x,size.y);
-      [this.blurA,this.blurB,this.mask].forEach(rt => rt.setSize(Math.max(1,Math.round(size.x/2)),Math.max(1,Math.round(size.y/2))));
+      [this.blurA,this.blurB].forEach(rt => rt.setSize(Math.max(1,Math.round(size.x/2)),Math.max(1,Math.round(size.y/2))));
+      this.mask.setSize(size.x,size.y);
       this.composite.uniforms.texel.value.set(1/size.x,1/size.y);
     }
     pass(material,target) {
@@ -192,20 +199,49 @@ const DFNEffects = (() => {
       r.render(s,this.camera);
       if (amount > 0.002) {
         const roots = s.children.map(child => [child,child.visible]);
-        const childStates = selected ? selected.children.map(child => [child,child.visible]) : [];
+        const groups = s.children.filter(child => child._meshRef || child._subMeshes);
+        const childStates = groups.flatMap(group => group.children.map(child => [child,child.visible]));
+        const labels = s.children.filter(child => child.isSprite && child.visible);
+        const labelStates = labels.map(sprite => [sprite,sprite.material]);
         const background = s.background, override = s.overrideMaterial;
         const shadows = r.shadowMap.enabled;
+        const autoClear = r.autoClear;
+        const cameraLayers = this.camera.layers.mask;
         try {
-          s.children.forEach(child => { child.visible = child === selected || child === label; });
-          if (selected) selected.children.forEach(child => { child.visible = child === selected._meshRef || selected._subMeshes?.some(part => part.mesh === child); });
-          s.background = this.black; s.overrideMaterial = this.white;
+          groups.forEach(group => group.children.forEach(child => {
+            child.visible = child === group._meshRef || group._subMeshes?.some(part => part.mesh === child);
+          }));
+          labels.forEach(sprite => {
+            let material = this.labelMasks.get(sprite);
+            if (!material) {
+              material = new THREE.SpriteMaterial({ transparent:true, depthTest:false, depthWrite:false, fog:false });
+              this.labelMasks.set(sprite,material);
+            }
+            material.map = sprite.material.map;
+            material.color.setHex(sprite === label ? 0xffffff : 0x00ff00);
+            sprite.material = material;
+          });
+          s.background = this.black; s.overrideMaterial = this.green;
+          s.children.forEach(child => { child.visible = groups.includes(child) && child !== selected; });
           r.shadowMap.enabled = false;
           r.setRenderTarget(this.mask); r.render(s,this.camera);
+          // Layer the selected silhouette over the surroundings without clearing their mask.
+          s.children.forEach(child => { child.visible = child === selected; });
+          s.background = null; s.overrideMaterial = this.white; r.autoClear = false;
+          r.render(s,this.camera);
+          // Sprite labels need their own shader and texture alpha to mask only the glyphs.
+          s.children.forEach(child => { child.visible = labels.includes(child); });
+          s.overrideMaterial = null;
+          this.camera.layers.set(1);
+          r.render(s,this.camera);
         } finally {
           roots.forEach(([child,visible]) => { child.visible = visible; });
           childStates.forEach(([child,visible]) => { child.visible = visible; });
+          labelStates.forEach(([sprite,material]) => { sprite.material = material; });
           s.background = background; s.overrideMaterial = override;
           r.shadowMap.enabled = shadows;
+          r.autoClear = autoClear;
+          this.camera.layers.mask = cameraLayers;
         }
         this.blur.uniforms.source.value = this.color.texture;
         this.blur.uniforms.direction.value.set(2.2 / this.blurA.width,0);
@@ -216,11 +252,18 @@ const DFNEffects = (() => {
       }
       const u = this.composite.uniforms;
       u.amount.value = amount; u.bloom.value = bloom;
-      if (selected) {
-        const view = selected.position.clone().applyMatrix4(this.camera.matrixWorldInverse);
-        u.focalDepth.value = -view.z;
-      }
       this.pass(this.composite,null);
+      // Draw legible label cards after all scene blur and bloom.
+      const background = s.background, override = s.overrideMaterial;
+      const cameraLayers = this.camera.layers.mask, autoClear = r.autoClear, shadows = r.shadowMap.enabled;
+      try {
+        s.background = null; s.overrideMaterial = null;
+        this.camera.layers.set(1); r.autoClear = false; r.shadowMap.enabled = false;
+        r.render(s,this.camera);
+      } finally {
+        s.background = background; s.overrideMaterial = override;
+        this.camera.layers.mask = cameraLayers; r.autoClear = autoClear; r.shadowMap.enabled = shadows;
+      }
     }
   }
 
