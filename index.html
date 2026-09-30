@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>DFN — Component Architecture</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%2303040a'/%3E%3Cpath d='M16 5 27 11v12l-11 6L5 23V11Zm0 0v12m11-6-11 6-11-6m11 6v12' fill='none' stroke='%2300e5ff' stroke-width='2'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@700;800&family=Fraunces:opsz,wght@9..144,600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
@@ -17,13 +18,10 @@
 </div>
 
 <!-- Three.js canvas -->
-<div id="c"></div>
+<div id="c" tabindex="0" role="application" aria-label="Interactive architecture. Drag to orbit, scroll to zoom, use arrow keys to choose a component, Enter to inspect, and Escape to reset."></div>
 
-<!-- CSS bloom glow (projected to 3D position each frame) -->
-<div id="glow-dot"></div>
-
-<!-- Spotlight darken overlay — radial gradient with hole at selected component -->
-<div id="sel-overlay"></div>
+<div id="tech-cursor" aria-hidden="true"><span class="cursor-core"></span><span class="cursor-ring"></span><span class="cursor-brackets"></span></div>
+<div id="cursor-pulse" aria-hidden="true"></div>
 
 <!-- Header -->
 <div id="hdr">
@@ -39,10 +37,12 @@
   </div>
 </div>
 
-<div id="hint">🖱 Drag · Scroll · Click component</div>
+<div id="hint">Drag · Scroll · Click component · Esc to reset</div>
 
 <!-- Side info panel (slides in on selection) -->
-<div id="focus-panel">
+<aside id="focus-panel" aria-label="Component inspector" aria-hidden="true" inert>
+  <div class="fp-eyebrow"><span>COMPONENT INSPECTOR</span><button id="btn-close" aria-label="Close component inspector" title="Close (Escape)">×</button></div>
+  <div id="fp-content">
   <div id="fp-header">
     <div id="fp-color-dot"></div>
     <div id="fp-title-wrap">
@@ -55,10 +55,15 @@
   <div id="fp-desc"></div>
   <div class="fp-lbl" style="margin-top:16px">CATEGORY</div>
   <div id="fp-cat"></div>
-  <div class="fp-lbl" style="margin-top:16px">CONNECTS TO</div>
-  <div id="fp-connections"></div>
+  <details class="fp-section" open><summary>Properties</summary><dl id="fp-properties"></dl></details>
+  <details class="fp-section" open><summary>Connections <span id="fp-connection-count"></span></summary><div id="fp-connections"></div></details>
+  <details class="fp-section"><summary>Configuration</summary><div id="fp-config"></div></details>
+  <details class="fp-section" id="fp-extra-section" hidden><summary>Additional details</summary><div id="fp-extra"></div></details>
+  </div>
+  <label class="fp-lbl fp-switch-label" for="fp-switch">INSPECT ANOTHER COMPONENT</label>
+  <select id="fp-switch" aria-label="Choose component to inspect"></select>
   <button id="btn-deselect">← Reset View</button>
-</div>
+</aside>
 
 <!-- Controls -->
 <div id="ctrl">
@@ -71,12 +76,13 @@
 <div id="mode">View: <b id="mlbl">Isometric</b></div>
 
 <!-- Hover tooltip -->
-<div id="tip">
+<div id="tip" role="tooltip">
   <div class="tn" id="tname"></div>
   <div class="td" id="tdesc"></div>
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="interaction-effects.js"></script>
 <script src="script.js"></script>
 </body>
 </html>

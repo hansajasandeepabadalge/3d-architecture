@@ -1,6 +1,6 @@
 /* ============================================================
    DFN Architecture — Interactive 3D with per-layer colors,
-   selection focus, spotlight dimming, and CSS bloom glow.
+   geometry-bound energy effects and cinematic component inspection.
    ============================================================ */
 
 const W = () => window.innerWidth, H = () => window.innerHeight;
@@ -75,10 +75,12 @@ function toGray(hex) {
 
 /* ── Renderer / Scene / Camera ───────────────────────────── */
 const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
 renderer.setSize(W(), H());
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.shadowMap.autoUpdate = false;
+renderer.shadowMap.needsUpdate = true;
 document.getElementById('c').appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
@@ -90,6 +92,23 @@ const camera = new THREE.OrthographicCamera(-SZ * W() / H(), SZ * W() / H(), SZ,
 
 const ISO = { theta: Math.PI / 4, phi: Math.atan(1 / Math.sqrt(2)), radius: 95, zoom: SZ, tx: 0, ty: 0, tz: 0 };
 const orbit = { ...ISO, _theta: ISO.theta, _phi: ISO.phi, _radius: ISO.radius, _zoom: SZ, _tx: 0, _ty: 0, _tz: 0 };
+let cameraTransition = null, savedView = null;
+let framing = 0;
+function transitionCamera(target, duration = 1.05) {
+  const start = {};
+  ['theta','phi','zoom','tx','ty','tz'].forEach(key => { start[key] = orbit['_' + key]; });
+  Object.assign(orbit, target);
+  cameraTransition = { start, target: { ...start, ...target }, elapsed: 0, duration: DFNEffects.reduced() ? 0.12 : duration };
+}
+function advanceCamera(dt) {
+  if (!cameraTransition) return;
+  const tween = cameraTransition;
+  tween.elapsed += dt;
+  const p = Math.min(1, tween.elapsed / tween.duration);
+  const ease = p * p * p * (p * (p * 6 - 15) + 10);
+  Object.keys(tween.start).forEach(key => { orbit['_' + key] = THREE.MathUtils.lerp(tween.start[key],tween.target[key],ease); });
+  if (p === 1) cameraTransition = null;
+}
 
 function applyOrbit() {
   const sp = Math.sin(orbit._phi), cp = Math.cos(orbit._phi);
@@ -100,8 +119,12 @@ function applyOrbit() {
   );
   camera.lookAt(orbit._tx, orbit._ty, orbit._tz);
   const a = W() / H();
-  camera.left = -orbit._zoom * a; camera.right = orbit._zoom * a;
-  camera.top = orbit._zoom; camera.bottom = -orbit._zoom;
+  // Frame the object in the available space beside (or above) the inspector.
+  const narrow = W() <= 720;
+  const xBias = narrow ? 0 : framing * Math.min(360,W() * 0.32) / W() * orbit._zoom * a;
+  const yBias = narrow ? -framing * orbit._zoom * 0.4 : 0;
+  camera.left = -orbit._zoom * a + xBias; camera.right = orbit._zoom * a + xBias;
+  camera.top = orbit._zoom + yBias; camera.bottom = -orbit._zoom + yBias;
   camera.updateProjectionMatrix();
 }
 applyOrbit();
@@ -287,7 +310,7 @@ function connect(a, b, layerKey, both) {
   const color = layerKey ? LC(layerKey).edge : T().wire;
   const mat = new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.48 });
   const line = new THREE.Line(geo, mat); scene.add(line);
-  connectionLines.push({ line, layerKey, baseColor: color });
+  connectionLines.push({ line, layerKey, baseColor: color, a, b });
 
   const mkDot = (pa, pb) => {
     const dmat = new THREE.MeshBasicMaterial({
@@ -295,7 +318,7 @@ function connect(a, b, layerKey, both) {
       blending: THREE.AdditiveBlending, depthWrite: false,
     });
     const dot = new THREE.Mesh(new THREE.SphereGeometry(0.1, 8, 8), dmat);
-    dot.userData.anim = { pa: pa.clone(), pb: pb.clone(), t: Math.random(), speed: 0.27 + Math.random() * 0.27 };
+    dot.userData.anim = { pa: pa.clone(), pb: pb.clone(), a: pa === pts[0] ? a : b, b: pb === pts[1] ? b : a, t: Math.random(), speed: 0.27 + Math.random() * 0.27 };
     dot.userData.layerKey = layerKey;
     scene.add(dot); arrows.push(dot);
   };
@@ -305,7 +328,7 @@ function connect(a, b, layerKey, both) {
 
 /* ── Build from architecture.json ────────────────────────── */
 let ARCH = null;
-const nodeStates = {}; // { [id]: { dim: 0..1, dimTarget: 0..1 } }
+const nodeStates = {};
 
 function buildFromArch(arch) {
   ARCH = arch;
@@ -325,8 +348,13 @@ function buildFromArch(arch) {
     addNode(n.id, group, sx(n.x), y, sz(n.row), {
       label: n.label, sub: n.sub || '', h: side,
     });
-    nodeStates[n.id] = { dim: 0, dimTarget: 0 };
+    DFNEffects.createNode(group, side, LC(n.layer).edge);
+    nodeStates[n.id] = { dim: 0, dimTarget: 0, hover: 0, selection: 0, burstAge: 10 };
   });
+  document.getElementById('fp-switch').replaceChildren(...arch.nodes.map(n => {
+    const option = document.createElement('option'); option.value = n.id; option.textContent = n.label;
+    return option;
+  }));
 
   arch.connections.forEach(c => {
     const a = nodes[c.from], b = nodes[c.to];
@@ -342,30 +370,37 @@ function buildFromArch(arch) {
 
 /* ── Selection system ────────────────────────────────────── */
 let selectedNodeId = null;
+let hoveredNodeId = null, hoverProximity = 0;
+let focusNodeId = null;
 const selEnv = { current: 0, target: 0 }; // global 0→1 envelope
 
-const glowDot     = document.getElementById('glow-dot');
-const selOverlay  = document.getElementById('sel-overlay');
 const focusPanel  = document.getElementById('focus-panel');
-let glowDotActive = false;
-let overlayActive = false;
 
 function selectNode(id) {
   if (!ARCH || !nodes[id]) return;
+  if (!selectedNodeId && !cameraTransition?.returning) {
+    savedView = {};
+    ['theta','phi','zoom','tx','ty','tz'].forEach(key => { savedView[key] = orbit['_' + key]; });
+    savedView.autoRot = autoRot;
+  }
+  autoRot = false;
+  resumeAutoRotation = false;
+  document.getElementById('btn-rot').classList.remove('active');
   selectedNodeId = id;
+  focusNodeId = id;
   selEnv.target = 1;
+  nodeStates[id].burstAge = 0;
 
   ARCH.nodes.forEach(n => {
-    if (!nodeStates[n.id]) nodeStates[n.id] = { dim: 0, dimTarget: 0 };
     nodeStates[n.id].dimTarget = n.id === id ? 0 : 1;
   });
 
   // Smooth camera focus on node
   const nd = nodes[id];
-  orbit.tx = nd.x; orbit.ty = nd.y; orbit.tz = nd.z;
-  orbit.zoom = 9;
+  transitionCamera({ tx: nd.x, ty: nd.y, tz: nd.z, zoom: Math.max(8,Math.min(orbit._zoom,17)) });
 
   _showFocusPanel(id);
+  document.body.classList.add('is-inspecting');
   document.getElementById('mlbl').textContent = 'Focus: ' + (ARCH.nodes.find(n => n.id === id)?.label || id);
 }
 
@@ -374,10 +409,15 @@ function deselectNode() {
   selectedNodeId = null;
   selEnv.target = 0;
   ARCH?.nodes.forEach(n => { if (nodeStates[n.id]) nodeStates[n.id].dimTarget = 0; });
-  // Return to ISO
-  Object.assign(orbit, { theta: ISO.theta, phi: ISO.phi, zoom: ISO.zoom, tx: ISO.tx, ty: ISO.ty, tz: ISO.tz });
+  const returnView = savedView || ISO;
+  const { autoRot: resumeRotation, ...target } = returnView;
+  transitionCamera(target,0.9);
+  cameraTransition.returning = true;
+  // Resume automatic rotation only after the return animation completes.
+  resumeAutoRotation = !!resumeRotation;
   _hideFocusPanel();
-  document.getElementById('mlbl').textContent = 'Isometric';
+  document.body.classList.remove('is-inspecting');
+  document.getElementById('mlbl').textContent = Math.abs(target.theta - ISO.theta) < 0.01 && Math.abs(target.phi - ISO.phi) < 0.01 ? 'Isometric' : 'Free';
 }
 
 function _showFocusPanel(id) {
@@ -396,38 +436,88 @@ function _showFocusPanel(id) {
   document.getElementById('fp-desc').textContent = nodeDef.desc || '—';
   document.getElementById('fp-cat').textContent = layerLabel;
   document.getElementById('fp-cat').style.color = edgeCSS;
+  focusPanel.style.setProperty('--node-accent',edgeCSS);
+  document.getElementById('fp-switch').value = id;
+
+  const list = document.getElementById('fp-properties');
+  const entries = [
+    ['ID',nodeDef.id], ['Type',nodeDef.type || (nodeDef.shape === 'db' ? 'Database' : 'Service component')],
+    ['Category',layerLabel], ['Geometry',nodeDef.shape === 'db' ? 'Three-tier cube' : 'Cube'],
+    ['Dimensions',`${nodes[id].meta.h} × ${nodes[id].meta.h} × ${nodes[id].meta.h}`],
+    ['Ratio','1 : 1 : 1'], ['Placement','Grounded'],
+  ];
+  const row = (key,value) => {
+    const term = document.createElement('dt'); term.textContent = key;
+    const detail = document.createElement('dd'); detail.textContent = typeof value === 'object' ? JSON.stringify(value) : String(value);
+    return [term,detail];
+  };
+  list.replaceChildren(...entries.flatMap(([key,value]) => row(key,value)));
+  if (nodeDef.properties && typeof nodeDef.properties === 'object') {
+    Object.entries(nodeDef.properties).forEach(([key,value]) => list.append(...row(key,value)));
+  }
 
   const conns = ARCH.connections.filter(c => c.from === id || c.to === id);
-  const names = [...new Set(conns.map(c => {
+  const connectionRows = conns.map(c => {
     const oid = c.from === id ? c.to : c.from;
-    return ARCH.nodes.find(n => n.id === oid)?.label || oid;
-  }))];
-  document.getElementById('fp-connections').textContent = names.length ? names.join(', ') : '—';
+    const button = document.createElement('button');
+    button.className = 'fp-connection'; button.type = 'button';
+    const name = document.createElement('span'); name.textContent = ARCH.nodes.find(n => n.id === oid)?.label || oid;
+    const direction = document.createElement('small'); direction.textContent = c.both ? '↔ Bidirectional' : c.from === id ? '→ Outgoing' : '← Incoming';
+    button.append(name,direction); button.addEventListener('click',() => selectNode(oid));
+    return button;
+  });
+  document.getElementById('fp-connection-count').textContent = String(conns.length);
+  const connList = document.getElementById('fp-connections');
+  connList.replaceChildren(...connectionRows);
+  if (!conns.length) connList.textContent = 'No connections defined.';
+  const fillDetails = (container,value,emptyText) => {
+    container.replaceChildren();
+    if (value == null) { container.textContent = emptyText; return; }
+    const pre = document.createElement('pre'); pre.textContent = typeof value === 'object' ? JSON.stringify(value,null,2) : String(value);
+    container.append(pre);
+  };
+  fillDetails(document.getElementById('fp-config'),nodeDef.configuration ?? nodeDef.config,'No runtime configuration provided.');
+  const known = new Set(['id','label','sub','layer','shape','size','x','row','desc','type','properties','configuration','config']);
+  const extra = Object.fromEntries(Object.entries(nodeDef).filter(([key]) => !known.has(key)));
+  extra.layout = { x: nodeDef.x, row: nodeDef.row, worldPosition: {x:nodes[id].x,y:nodes[id].y,z:nodes[id].z} };
+  fillDetails(document.getElementById('fp-extra'),extra);
+  document.getElementById('fp-extra-section').hidden = false;
+  const content = document.getElementById('fp-content');
+  content.getAnimations().forEach(animation => animation.cancel());
+  if (!DFNEffects.reduced()) content.animate([{opacity:0.35,transform:'translateY(5px)'},{opacity:1,transform:'translateY(0)'}],{duration:260,easing:'ease-out'});
 
   focusPanel.classList.add('visible');
+  focusPanel.inert = false;
+  focusPanel.setAttribute('aria-hidden','false');
 }
 function _hideFocusPanel() {
+  if (focusPanel.contains(document.activeElement)) document.getElementById('c').focus({preventScroll:true});
   focusPanel.classList.remove('visible');
+  focusPanel.inert = true;
+  focusPanel.setAttribute('aria-hidden','true');
 }
 
 /* Per-frame: lerp all materials + update CSS overlays */
-function tickSelection(t) {
+function tickSelection(t,dt) {
   if (!ARCH) return;
   const sel = selectedNodeId;
 
   // Global envelope (0=idle, 1=focused)
-  selEnv.current += (selEnv.target - selEnv.current) * 0.055;
+  const ease = 1 - Math.exp(-dt * (DFNEffects.reduced() ? 35 : 7));
+  selEnv.current += (selEnv.target - selEnv.current) * ease;
   const env = selEnv.current;
 
   // Slow breath for glow pulse (~10.8s period)
-  const breath = Math.sin(t * 0.58) * 0.5 + 0.5;
+  const breath = DFNEffects.reduced() ? 0.5 : Math.sin(t * 1.8) * 0.5 + 0.5;
 
   ARCH.nodes.forEach(n => {
     const node = nodes[n.id]; if (!node) return;
     const st = nodeStates[n.id]; if (!st) return;
-    st.dim += (st.dimTarget - st.dim) * 0.062;
+    st.dim += (st.dimTarget - st.dim) * ease;
+    st.hover += ((hoveredNodeId === n.id ? 0.6 + hoverProximity * 0.4 : 0) - st.hover) * ease;
+    st.selection += ((sel === n.id ? 1 : 0) - st.selection) * ease;
+    st.burstAge += dt;
 
-    const isSel = sel === n.id;
     const dim = st.dim;
     const lc = LC(n.layer);
 
@@ -438,20 +528,16 @@ function tickSelection(t) {
     const edgeOp     = T().edgeOpacity * Math.max(0.12, 1 - dim * 0.78);
 
     // Emissive: selected node breathes, others fade to a low idle glow
-    const emissiveInt = isSel
-      ? (T().glow ? env * (0.9 + 0.3 * breath) + T().baseEmissive * (1 - env) : 0)
-      : (T().glow ? T().baseEmissive * (1 - dim * 0.7) : 0);
+    const active = Math.min(1,st.selection + st.hover * 0.55);
+    const emissiveInt = T().baseEmissive * (1 - dim * 0.7) + active * (theme === 'dark' ? 0.42 + 0.08 * breath : 0.16);
 
     const applyMesh = (mesh, edges) => {
       mesh.material.color.setHex(fillTarget);
-      mesh.material.opacity = opacity;
-      mesh.material.transparent = true;
+      mesh.material.opacity = opacity * (mesh.userData.baseOpacity ?? 1);
       mesh.material.emissive.setHex(T().glow ? lc.edge : 0x000000);
       mesh.material.emissiveIntensity = emissiveInt;
       edges.material.color.setHex(edgeTarget);
-      edges.material.opacity = isSel
-        ? Math.min(1, T().edgeOpacity + env * 0.12)
-        : edgeOp;
+      edges.material.opacity = Math.min(1, edgeOp + active * 0.2);
     };
 
     const g = node.group;
@@ -459,47 +545,34 @@ function tickSelection(t) {
     if (g._subMeshes) g._subMeshes.forEach(({ mesh, edges }) => applyMesh(mesh, edges));
     if (g._glowRef) {
       g._glowRef.material.color.setHex(edgeTarget);
-      g._glowRef.material.opacity = T().haloOpacity * (1 - dim * 0.85)
-        * (isSel ? 1 + env * (0.6 + 0.2 * breath) : 0.9 + 0.1 * breath);
+      g._glowRef.material.opacity = T().haloOpacity * (1 - dim * 0.85) * (0.75 + active * 0.45);
+      g._glowRef.scale.set(g._effects.side * (2.3 + active * 0.45),g._effects.side * (2.3 + active * 0.45),1);
     }
+    const scale = 1 + (DFNEffects.reduced() ? 0 : active * 0.016);
+    if (Math.abs(g.scale.y-scale) > 0.0001) renderer.shadowMap.needsUpdate = true;
+    g.scale.setScalar(scale);
+    g.position.y = node.y * scale;
+    DFNEffects.tickNode(g,st,t,edgeTarget,theme === 'dark');
   });
 
   // Connection lines & packet dots — dim when anything is selected
-  connectionLines.forEach(({ line }) => { line.material.opacity = sel ? 0.10 : 0.48; });
-  arrows.forEach(d => { d.material.opacity = sel ? 0.08 : 1.0; });
+  connectionLines.forEach(({ line,a,b }) => {
+    line.material.opacity = THREE.MathUtils.lerp(0.48,0.18,env);
+    const p = line.geometry.attributes.position;
+    p.setXYZ(0,a.group.position.x,a.group.position.y,a.group.position.z);
+    p.setXYZ(1,b.group.position.x,b.group.position.y,b.group.position.z);
+    p.needsUpdate = true;
+  });
+  arrows.forEach(d => { d.material.opacity = THREE.MathUtils.lerp(1,0.22,env); });
 
   // Label sprites — focused label stays bright, others dim
   labelSprites.forEach(entry => {
-    const isSel = sel && entry.nodeId === sel;
-    entry.sprite.material.opacity = isSel ? 1.0 : (sel ? 0.10 : 1.0);
+    const state = nodeStates[entry.nodeId];
+    entry.sprite.material.opacity = 1 - state.dim * 0.7;
+    const node = nodes[entry.nodeId];
+    entry.sprite.position.y = node.meta.h * node.group.scale.y + 1.1;
   });
-
-  // ── CSS Glow dot ──
-  if (sel && nodes[sel]) {
-    const fn = nodes[sel];
-    const wp = new THREE.Vector3(fn.x, fn.group.position.y, fn.z);
-    wp.project(camera);
-    const px = ((wp.x + 1) / 2) * W();
-    const py = ((-wp.y + 1) / 2) * H();
-    const lc = LC(ARCH.nodes.find(n => n.id === sel)?.layer || 'core');
-    const cr = (lc.edge >> 16) & 0xff, cg = (lc.edge >> 8) & 0xff, cb = lc.edge & 0xff;
-    const a1 = (env * (0.54 + 0.16 * breath)).toFixed(3);
-    const a2 = (env * (0.22 + 0.07 * breath)).toFixed(3);
-
-    glowDot.style.left = px + 'px';
-    glowDot.style.top  = py + 'px';
-    glowDot.style.background =
-      `radial-gradient(circle, rgba(${cr},${cg},${cb},${a1}) 0%, rgba(${cr},${cg},${cb},${a2}) 30%, rgba(${cr},${cg},${cb},0) 70%)`;
-    if (!glowDotActive) { glowDot.style.opacity = '1'; glowDotActive = true; }
-
-    // Spotlight overlay — follow selected component in real time
-    selOverlay.style.setProperty('--sx', px + 'px');
-    selOverlay.style.setProperty('--sy', py + 'px');
-    if (!overlayActive) { selOverlay.classList.add('active'); overlayActive = true; }
-  } else {
-    if (glowDotActive)  { glowDot.style.opacity = '0'; glowDotActive = false; }
-    if (overlayActive)  { selOverlay.classList.remove('active'); overlayActive = false; }
-  }
+  if (!sel && env < 0.002) focusNodeId = null;
 }
 
 /* ── Theme system ────────────────────────────────────────── */
@@ -547,171 +620,197 @@ function setTheme(next) {
   document.getElementById('tt-icon').textContent  = theme === 'dark' ? '☾' : '☀';
   document.getElementById('tt-label').textContent = theme === 'dark' ? 'Neon' : 'Cozy';
   applyThemeToScene();
+  if (selectedNodeId) _showFocusPanel(selectedNodeId);
 }
 document.getElementById('theme-toggle').addEventListener('click',
   () => setTheme(theme === 'dark' ? 'light' : 'dark'));
 document.getElementById('tt-icon').textContent  = theme === 'dark' ? '☾' : '☀';
 document.getElementById('tt-label').textContent = theme === 'dark' ? 'Neon' : 'Cozy';
 
-/* ── Click detection ─────────────────────────────────────── */
+/* ── Pointer, touch, and keyboard interaction ─────────────── */
+const canvasHost = document.getElementById('c');
 const raycaster = new THREE.Raycaster();
-const hoverMouse = new THREE.Vector2(-9999, -9999);
+const hoverMouse = new THREE.Vector2(-9999,-9999);
 const tip = document.getElementById('tip');
-let mouseDownPos = null;
+const techCursor = new DFNEffects.Cursor();
+const focusRenderer = new DFNEffects.FocusRenderer(renderer,scene,camera);
+const pointerPositions = new Map();
+let drag = null, pinchDistance = null;
+let autoRot = false, autoAngle = orbit.theta, resumeAutoRotation = false;
+let pointerOnScene = false, pointerX = 0, pointerY = 0;
+let keyboardIndex = -1;
+const hoverProjected = new THREE.Vector3();
 
-document.getElementById('c').addEventListener('mousedown', e => {
-  mouseDownPos = { x: e.clientX, y: e.clientY };
-});
-document.getElementById('c').addEventListener('click', e => {
-  if (!mouseDownPos) return;
-  const dx = e.clientX - mouseDownPos.x, dy = e.clientY - mouseDownPos.y;
-  if (dx * dx + dy * dy > 30) return; // ignore drags
-
-  const mx = (e.clientX / W()) * 2 - 1;
-  const my = -(e.clientY / H()) * 2 + 1;
-  raycaster.setFromCamera(new THREE.Vector2(mx, my), camera);
-  const hits = raycaster.intersectObjects(meshes, false);
-  if (hits.length) {
-    const id = hits[0].object.userData.nodeId;
-    if (id) { (selectedNodeId === id) ? deselectNode() : selectNode(id); return; }
+function cancelCameraTransition() {
+  if (!cameraTransition) return;
+  ['theta','phi','zoom','tx','ty','tz'].forEach(key => { orbit[key] = orbit['_' + key]; });
+  cameraTransition = null;
+}
+function hitAt(x,y) {
+  raycaster.setFromCamera(new THREE.Vector2(x / W() * 2 - 1,-y / H() * 2 + 1),camera);
+  return raycaster.intersectObjects(meshes,false)[0]?.object.userData.nodeId || null;
+}
+function updateHover() {
+  hoveredNodeId = null;
+  if (pointerOnScene && !drag) {
+    raycaster.setFromCamera(hoverMouse,camera);
+    hoveredNodeId = raycaster.intersectObjects(meshes,false)[0]?.object.userData.nodeId || null;
   }
-  deselectNode(); // click on empty — deselect
+  const node = hoveredNodeId && nodes[hoveredNodeId];
+  if (node) {
+    hoverProjected.copy(node.group.position).project(camera);
+    const px = (hoverProjected.x + 1) * W() / 2, py = (1 - hoverProjected.y) * H() / 2;
+    const radius = node.meta.h * H() / (2 * orbit._zoom);
+    hoverProximity = 1 - Math.min(1,Math.hypot(pointerX-px,pointerY-py) / radius);
+    const def = ARCH.nodes.find(n => n.id === hoveredNodeId);
+    if (selectedNodeId !== hoveredNodeId) {
+      document.getElementById('tname').textContent = def.label + (def.sub ? ' · ' + def.sub : '');
+      document.getElementById('tdesc').textContent = def.desc || '';
+      tip.style.display = 'block';
+      tip.style.left = Math.max(8,Math.min(W()-tip.offsetWidth-8,pointerX+20)) + 'px';
+      tip.style.top = Math.max(62,Math.min(H()-tip.offsetHeight-8,pointerY+20)) + 'px';
+      return;
+    }
+  }
+  tip.style.display = 'none';
+}
+window.addEventListener('pointermove',e => {
+  pointerOnScene = e.pointerType !== 'touch' && canvasHost.contains(e.target);
+  pointerX = e.clientX; pointerY = e.clientY;
+  hoverMouse.set(e.clientX / W() * 2 - 1,-e.clientY / H() * 2 + 1);
 });
-
-window.addEventListener('mousemove', e => {
-  hoverMouse.x = (e.clientX / W()) * 2 - 1;
-  hoverMouse.y = -(e.clientY / H()) * 2 + 1;
-  tip.style.left = (e.clientX + 16) + 'px';
-  tip.style.top  = (e.clientY + 16) + 'px';
+canvasHost.addEventListener('pointerleave',() => { pointerOnScene = false; });
+window.addEventListener('blur',() => {
+  pointerOnScene = false; drag = null; pointerPositions.clear(); pinchDistance = null;
 });
-
-document.getElementById('btn-deselect').addEventListener('click', deselectNode);
-
-/* ── Orbit controls ──────────────────────────────────────── */
-let drag = null, autoRot = false, autoAngle = orbit.theta;
-const hintEl = document.getElementById('hint');
-let hintFaded = false;
-
-document.getElementById('c').addEventListener('contextmenu', e => e.preventDefault());
-document.getElementById('c').addEventListener('mousedown', e => {
-  autoRot = false;
-  document.getElementById('btn-rot').classList.remove('active');
-  drag = { type: e.button === 2 ? 'pan' : 'orbit', x: e.clientX, y: e.clientY };
-  if (!hintFaded) { hintEl.classList.add('faded'); hintFaded = true; }
+canvasHost.addEventListener('contextmenu',e => e.preventDefault());
+canvasHost.addEventListener('pointerdown',e => {
+  if (e.button !== 0 && e.button !== 2) return;
+  canvasHost.setPointerCapture(e.pointerId);
+  pointerPositions.set(e.pointerId,{x:e.clientX,y:e.clientY});
+  if (pointerPositions.size > 1) { if (drag) drag.moved = true; pinchDistance = null; return; }
+  drag = { id:e.pointerId, type:e.button === 2 ? 'pan' : 'orbit', x:e.clientX,y:e.clientY,
+    startX:e.clientX,startY:e.clientY, moved:false, button:e.button };
 });
-window.addEventListener('mouseup', () => { drag = null; mouseDownPos = null; });
-window.addEventListener('mousemove', e => {
-  if (!drag) return;
-  const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+canvasHost.addEventListener('pointermove',e => {
+  if (!pointerPositions.has(e.pointerId) || !drag) return;
+  pointerPositions.set(e.pointerId,{x:e.clientX,y:e.clientY});
+  if (pointerPositions.size > 1) {
+    const [a,b] = [...pointerPositions.values()];
+    const distance = Math.hypot(a.x-b.x,a.y-b.y);
+    cancelCameraTransition();
+    if (pinchDistance && distance > 0) orbit.zoom = Math.max(7,Math.min(58,orbit.zoom * pinchDistance / distance));
+    pinchDistance = distance; drag.moved = true;
+    return;
+  }
+  if (e.pointerId !== drag.id) return;
+  if (!drag.moved && Math.hypot(e.clientX-drag.startX,e.clientY-drag.startY) < 5) return;
+  if (!drag.moved) {
+    cancelCameraTransition(); autoRot = false; resumeAutoRotation = false;
+    document.getElementById('btn-rot').classList.remove('active');
+    document.getElementById('hint').classList.add('faded');
+  }
+  drag.moved = true;
+  const dx = e.clientX-drag.x, dy = e.clientY-drag.y;
   drag.x = e.clientX; drag.y = e.clientY;
   if (drag.type === 'orbit') {
     orbit.theta -= dx * 0.007;
-    orbit.phi = Math.max(0.06, Math.min(Math.PI / 2 - 0.02, orbit.phi - dy * 0.005));
-    if (!selectedNodeId) {
-      const iso = Math.abs(orbit.theta - ISO.theta) < 0.01 && Math.abs(orbit.phi - ISO.phi) < 0.01;
-      document.getElementById('mlbl').textContent = iso ? 'Isometric' : 'Free';
-    }
+    orbit.phi = Math.max(0.06,Math.min(Math.PI/2-0.02,orbit.phi-dy*0.005));
+  } else {
+    const speed = orbit._zoom * 0.0016;
+    const right = new THREE.Vector3().crossVectors(camera.getWorldDirection(new THREE.Vector3()),new THREE.Vector3(0,1,0)).normalize();
+    const forward = new THREE.Vector3().crossVectors(right,new THREE.Vector3(0,1,0)).normalize();
+    orbit.tx -= right.x*dx*speed-forward.x*dy*speed;
+    orbit.tz -= right.z*dx*speed-forward.z*dy*speed;
   }
-  if (drag.type === 'pan') {
-    const spd = orbit._zoom * 0.0016;
-    const right = new THREE.Vector3();
-    right.crossVectors(camera.getWorldDirection(new THREE.Vector3()), new THREE.Vector3(0, 1, 0)).normalize();
-    const fwd = new THREE.Vector3(); fwd.crossVectors(right, new THREE.Vector3(0, 1, 0)).normalize();
-    orbit.tx -= right.x * dx * spd - fwd.x * dy * spd;
-    orbit.tz -= right.z * dx * spd - fwd.z * dy * spd;
-  }
+  if (!selectedNodeId) document.getElementById('mlbl').textContent = 'Free';
 });
-document.getElementById('c').addEventListener('wheel', e => {
-  e.preventDefault();
-  orbit.zoom = Math.max(7, Math.min(58, orbit.zoom + e.deltaY * 0.022));
-}, { passive: false });
-
-document.getElementById('btn-zi').onclick = () => orbit.zoom = Math.max(7,  orbit.zoom - 4);
-document.getElementById('btn-zo').onclick = () => orbit.zoom = Math.min(58, orbit.zoom + 4);
+function endPointer(e) {
+  const wasTap = drag && drag.id === e.pointerId && !drag.moved && drag.button === 0 && e.type !== 'pointercancel';
+  pointerPositions.delete(e.pointerId);
+  if (canvasHost.hasPointerCapture(e.pointerId)) canvasHost.releasePointerCapture(e.pointerId);
+  if (wasTap) {
+    const id = hitAt(e.clientX,e.clientY);
+    if (id && id !== selectedNodeId) selectNode(id);
+    else deselectNode();
+  }
+  if (!pointerPositions.size) { drag = null; pinchDistance = null; }
+  else if (drag?.id === e.pointerId) {
+    const [id,point] = pointerPositions.entries().next().value;
+    drag = { id,type:'orbit',x:point.x,y:point.y,startX:point.x,startY:point.y,moved:true,button:0 };
+    pinchDistance = null;
+  }
+}
+canvasHost.addEventListener('pointerup',endPointer);
+canvasHost.addEventListener('pointercancel',endPointer);
+function changeZoom(delta) {
+  cancelCameraTransition(); orbit.zoom = Math.max(7,Math.min(58,orbit.zoom+delta));
+}
+canvasHost.addEventListener('wheel',e => { e.preventDefault(); changeZoom(e.deltaY*0.022); },{passive:false});
+document.getElementById('btn-zi').onclick = () => changeZoom(-4);
+document.getElementById('btn-zo').onclick = () => changeZoom(4);
+document.getElementById('btn-close').onclick = deselectNode;
+document.getElementById('btn-deselect').onclick = deselectNode;
+document.getElementById('fp-switch').onchange = e => selectNode(e.target.value);
 document.getElementById('btn-iso').onclick = () => {
-  autoRot = false;
+  deselectNode(); autoRot = false; resumeAutoRotation = false; savedView = null;
   document.getElementById('btn-rot').classList.remove('active');
-  deselectNode();
-  Object.assign(orbit, ISO);
-  document.getElementById('mlbl').textContent = 'Isometric';
+  transitionCamera(ISO); document.getElementById('mlbl').textContent = 'Isometric';
 };
 document.getElementById('btn-rot').onclick = () => {
-  autoRot = !autoRot;
-  document.getElementById('btn-rot').classList.toggle('active', autoRot);
-  if (autoRot) autoAngle = orbit.theta;
+  cancelCameraTransition(); resumeAutoRotation = false;
+  autoRot = !autoRot; autoAngle = orbit.theta;
+  document.getElementById('btn-rot').classList.toggle('active',autoRot);
 };
-window.addEventListener('resize', () => { renderer.setSize(W(), H()); applyOrbit(); });
-
-/* ── Touch controls ──────────────────────────────────────── */
-let lt = null, lpd = null;
-document.getElementById('c').addEventListener('touchstart', e => {
-  if (e.touches.length === 1) lt = { x: e.touches[0].clientX, y: e.touches[0].clientY };
-  if (e.touches.length === 2) {
-    const dx = e.touches[0].clientX - e.touches[1].clientX;
-    const dy = e.touches[0].clientY - e.touches[1].clientY;
-    lpd = Math.sqrt(dx * dx + dy * dy);
+window.addEventListener('keydown',e => {
+  if (e.key === 'Escape') { deselectNode(); return; }
+  if (e.target !== canvasHost || !ARCH) return;
+  if (['ArrowRight','ArrowDown','ArrowLeft','ArrowUp'].includes(e.key)) {
+    e.preventDefault();
+    keyboardIndex = (keyboardIndex + (['ArrowLeft','ArrowUp'].includes(e.key) ? -1 : 1) + ARCH.nodes.length) % ARCH.nodes.length;
+    selectNode(ARCH.nodes[keyboardIndex].id);
+  } else if (e.key === 'Enter' || e.key === ' ') {
+    e.preventDefault(); selectNode(ARCH.nodes[Math.max(0,keyboardIndex)].id);
   }
-}, { passive: true });
-document.getElementById('c').addEventListener('touchmove', e => {
-  if (e.touches.length === 1 && lt) {
-    orbit.theta -= (e.touches[0].clientX - lt.x) * 0.007;
-    orbit.phi = Math.max(0.06, Math.min(Math.PI / 2 - 0.02, orbit.phi - (e.touches[0].clientY - lt.y) * 0.005));
-    lt = { x: e.touches[0].clientX, y: e.touches[0].clientY };
-  }
-  if (e.touches.length === 2 && lpd) {
-    const dx = e.touches[0].clientX - e.touches[1].clientX;
-    const dy = e.touches[0].clientY - e.touches[1].clientY;
-    const d = Math.sqrt(dx * dx + dy * dy);
-    orbit.zoom = Math.max(7, Math.min(58, orbit.zoom * (lpd / d)));
-    lpd = d;
-  }
-}, { passive: true });
-document.getElementById('c').addEventListener('touchend', () => { lt = null; lpd = null; });
+});
+window.addEventListener('resize',() => {
+  renderer.setPixelRatio(Math.min(devicePixelRatio,1.5));
+  renderer.setSize(W(),H()); focusRenderer.resize(); applyOrbit();
+});
 
 /* ── Animate loop ────────────────────────────────────────── */
 const clock = new THREE.Clock();
 function animate() {
   requestAnimationFrame(animate);
-  const dt = clock.getDelta(), t = clock.getElapsedTime();
+  const dt = Math.min(0.05,clock.getDelta()), t = clock.elapsedTime;
 
   if (autoRot) { autoAngle += dt * 0.18; orbit.theta = autoAngle; }
 
-  // Smooth camera lerp (easing = 9% per frame)
-  const L = 0.09;
-  orbit._theta += (orbit.theta - orbit._theta) * L;
-  orbit._phi   += (orbit.phi   - orbit._phi)   * L;
-  orbit._zoom  += (orbit.zoom  - orbit._zoom)  * L;
-  orbit._tx    += (orbit.tx    - orbit._tx)    * L;
-  orbit._ty    += (orbit.ty    - orbit._ty)    * L;
-  orbit._tz    += (orbit.tz    - orbit._tz)    * L;
+  framing += ((selectedNodeId ? 1 : 0) - framing) * (1 - Math.exp(-dt * 6));
+  if (cameraTransition) advanceCamera(dt);
+  else {
+    const ease = 1 - Math.exp(-dt * 9);
+    ['theta','phi','zoom','tx','ty','tz'].forEach(key => { orbit['_' + key] += (orbit[key]-orbit['_' + key]) * ease; });
+    if (resumeAutoRotation) {
+      autoRot = true; autoAngle = orbit.theta; resumeAutoRotation = false;
+      document.getElementById('btn-rot').classList.add('active');
+    }
+  }
   applyOrbit();
-
-  // Animated packet dots travel straight along their connection line
-  arrows.forEach(d => {
-    const a = d.userData.anim;
-    a.t = (a.t + dt * a.speed) % 1;
-    d.position.lerpVectors(a.pa, a.pb, a.t);
+  scene.updateMatrixWorld(true);
+  updateHover();
+  tickSelection(t,dt);
+  arrows.forEach(dot => {
+    const packet = dot.userData.anim;
+    if (!DFNEffects.reduced()) packet.t = (packet.t + dt * packet.speed) % 1;
+    dot.position.lerpVectors(packet.a.group.position,packet.b.group.position,packet.t);
   });
-
-  // Selection dimming, glow, and CSS overlays
-  tickSelection(t);
-
-  // Hover tooltip (only when nothing is selected)
-  if (!selectedNodeId) {
-    raycaster.setFromCamera(hoverMouse, camera);
-    const hits = raycaster.intersectObjects(meshes, false);
-    if (hits.length && ARCH) {
-      const id = hits[0].object.userData.nodeId;
-      const nd = id && ARCH.nodes.find(n => n.id === id);
-      if (nd) {
-        document.getElementById('tname').textContent = nd.label + (nd.sub ? ' · ' + nd.sub : '');
-        document.getElementById('tdesc').textContent = nd.desc || '';
-        tip.style.display = 'block';
-      } else { tip.style.display = 'none'; }
-    } else { tip.style.display = 'none'; }
-  } else { tip.style.display = 'none'; }
-
-  renderer.render(scene, camera);
+  const activeId = hoveredNodeId || selectedNodeId;
+  const cursorColor = activeId ? '#' + LC(nodes[activeId].group._layerKey).edge.toString(16).padStart(6,'0') : (theme === 'dark' ? '#00e5ff' : '#006472');
+  techCursor.tick(dt,hoveredNodeId,cursorColor,!!drag?.moved);
+  const focused = focusNodeId && nodes[focusNodeId].group;
+  const focusedLabel = labelSprites.find(entry => entry.nodeId === focusNodeId)?.sprite;
+  focusRenderer.render(selEnv.current,focused,focusedLabel,theme === 'dark' ? 0.22 : 0.015);
 }
 
 /* ── Boot ────────────────────────────────────────────────── */
