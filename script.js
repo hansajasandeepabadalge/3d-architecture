@@ -37,7 +37,7 @@ const THEMES = {
     wire:   0x263454,
     labelColor: '#d8f2ff', labelSubColor: 'rgba(140,205,255,0.68)',
     labelFont: 'Syne', labelFontWeight: '700',
-    glow: true, edgeOpacity: 0.95, baseEmissive: 0.28, haloOpacity: 0.32,
+    glow: true, edgeOpacity: 0.45, baseEmissive: 0.28, haloOpacity: 0.32,
   },
   light: {
     bg: 0xf0e8d4, fog: 0xf0e8d4, fogDensity: 0.0033,
@@ -48,7 +48,7 @@ const THEMES = {
     wire:   0xb8a070,
     labelColor: '#3a2a18', labelSubColor: 'rgba(100,78,52,0.7)',
     labelFont: 'Fraunces', labelFontWeight: '600',
-    glow: true, edgeOpacity: 0.78, baseEmissive: 0.12, haloOpacity: 0.16,
+    glow: true, edgeOpacity: 0.35, baseEmissive: 0.12, haloOpacity: 0.16,
   },
 };
 
